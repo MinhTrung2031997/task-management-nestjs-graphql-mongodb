@@ -1,0 +1,17 @@
+name: Deploy To Test Env
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/cd.yml
+    with:
+      environment: test
+      envVariableFilePath: ./.github/variables/test.deployment.env
+    secrets:
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      GH_REGISTRY_PACKAGES: ${{ secrets.GH_REGISTRY_PACKAGES }}
+      PA_TOKEN: ${{ secrets.PA_TOKEN }}

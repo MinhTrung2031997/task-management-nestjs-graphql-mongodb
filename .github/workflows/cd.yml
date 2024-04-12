@@ -1,0 +1,105 @@
+name: CD Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      envVariableFilePath:
+        required: true
+        type: string
+    secrets:
+      DOCKER_PASSWORD:
+        required: true
+      GH_REGISTRY_PACKAGES:
+          required: true
+      PA_TOKEN:
+        required: true
+
+jobs:
+  build:
+    name: setup, build, type-check
+    runs-on: [self-hosted]
+    strategy:
+      matrix:
+        node-version: [16.x]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node-version }}
+          registry-url: https://npm.pkg.github.com/
+          scope: "@ocean-network-express"
+      
+      - name: Cache node modules
+        id: cache-npm
+        uses: actions/cache@v3
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+
+      - if: ${{ steps.cache-npm.outputs.cache-hit != 'true' }}
+        name: List the state of node modules
+        continue-on-error: true
+        run: npm list
+
+      - name: install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_REGISTRY_PACKAGES }}
+          
+      - name: Build
+        run: npm run build
+
+  deploy:
+    name: Deploy to ${{ inputs.environment }} env
+    runs-on: ubuntu-latest
+    needs: [build]
+    container: google/cloud-sdk:latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set Environment Variables
+        uses: ./.github/actions/set-env-variables
+        with:
+          varFilePath: ${{ inputs.envVariableFilePath }}
+      - name: Deploy to ${{ inputs.environment }}
+        run: |
+          export IMAGE_NAME=asia.gcr.io/$DOCKER_IMAGE_REPOSITORY/${{ inputs.environment }}/${{ github.event.repository.name }}:$GITHUB_SHA
+          echo "//npm.pkg.github.com/:_authToken=$GH_REGISTRY_PACKAGES" > .global_npmrc
+          docker build -t $IMAGE_NAME --secret id=npmrc,src=.global_npmrc .
+          docker login -u $DOCKER_USERNAME -p "$DOCKER_PASSWORD" https://asia.gcr.io
+          docker push $IMAGE_NAME
+        env:
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          GH_REGISTRY_PACKAGES: ${{ secrets.GH_REGISTRY_PACKAGES }}
+      - name: Trigger Update Gitops
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.PA_TOKEN }}
+          script: |
+            const commit = await github.rest.repos.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `${{github.sha}}`
+            });
+            await github.rest.actions.createWorkflowDispatch({
+              owner: 'ocean-network-express',
+              repo: 'om-edh-config',
+              workflow_id: 'sync-deployment-image.yml',
+              ref: 'main',
+              inputs: {
+                repository: '${{ github.event.repository.name }}',
+                image: `asia.gcr.io/${{ env.DOCKER_IMAGE_REPOSITORY }}/${{ inputs.environment }}/${{ github.event.repository.name }}:${{github.sha}}`,
+                env: '${{ inputs.environment }}',
+                message: `${commit.data.commit.message}" -m "on ${{ github.event.ref }}" -m "by ${{ github.event.sender.login }}`,
+              },
+            });

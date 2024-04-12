@@ -1,0 +1,17 @@
+name: Deploy To Prod Env
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/cd.yml
+    with:
+      environment: prod
+      envVariableFilePath: ./.github/variables/prod.deployment.env
+    secrets:
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      GH_REGISTRY_PACKAGES: ${{ secrets.GH_REGISTRY_PACKAGES }}
+      PA_TOKEN: ${{ secrets.PA_TOKEN }}

@@ -1,0 +1,17 @@
+name: Deploy To Stage Env
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/cd.yml
+    with:
+      environment: stage
+      envVariableFilePath: ./.github/variables/stage.deployment.env
+    secrets:
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      GH_REGISTRY_PACKAGES: ${{ secrets.GH_REGISTRY_PACKAGES }}
+      PA_TOKEN: ${{ secrets.PA_TOKEN }}
